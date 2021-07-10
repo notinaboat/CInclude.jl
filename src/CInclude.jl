@@ -1,7 +1,7 @@
 """
 # CInclude.jl
 
-Include C language header files in Julia source code.
+Include C language header files in Julia source code
 (using [Clang.jl](https://github.com/JuliaInterop/Clang.jl)).
 
     julia> using CInclude
