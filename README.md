@@ -4,7 +4,7 @@ Include C language header files in Julia source code (using [Clang.jl](https://g
 
 ```
 julia> using CInclude
-julia> @cinclude "termios.h"
+julia> @cinclude "termios.h" quiet
 
 [ Info: @cinclude "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/termios.h"
 ...
@@ -19,7 +19,7 @@ julia> tcsetattr(fd, TCSANOW, Ref(settings))
 
 ## Interface
 
-    @cinclude "header.h"
+    @cinclude "header.h" [quiet] [exclude=r"^_"] [include=""] 
 
 Import symbols from C language `header.h` into the current module.
 

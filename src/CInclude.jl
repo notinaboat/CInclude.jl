@@ -5,7 +5,7 @@ Include C language header files in Julia source code
 (using [Clang.jl](https://github.com/JuliaInterop/Clang.jl)).
 
     julia> using CInclude
-    julia> @cinclude "termios.h"
+    julia> @cinclude "termios.h" quiet
 
     [ Info: @cinclude "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/termios.h"
     ...
@@ -43,7 +43,7 @@ function find_header(header)
 end
 
 
-function wrap_header(header; lib="libc", include="", exclude="\0") 
+function wrap_header(header; lib="libc", include="", exclude=r"^_") 
 
     header = find_header(header)
     @info "@cinclude \"$header\""
@@ -131,7 +131,7 @@ czeros(T) =
 README"## Interface"
 
 README"""
-    @cinclude "header.h"
+    @cinclude "header.h" [quiet] [exclude=r"^_"] [include=""] 
 
 Import symbols from C language `header.h` into the current module.
 
@@ -144,16 +144,24 @@ clashes with local names `@cinclude` can be used inside a sub-module. e.g.
     end
     SOCKET.send(fd, buf, length(buf), SOCKET.MSG_OOB)
 """
-macro cinclude(h)
+macro cinclude(h, options...)
+    if :quiet in options
+        options=filter(x->x!=:quiet, options)
+        logger=:NullLogger
+    else
+        logger=:current_logger
+    end 
     esc(quote
-        for e in CInclude.wrap_header($h)
-            if e isa String
-                @info e
-            else
-                try
-                    eval(e)
-                catch err
-                    @warn "$err in $e"
+        Base.CoreLogging.with_logger(Base.CoreLogging.$logger()) do
+            for e in CInclude.wrap_header($h; $(options...))
+                if e isa String
+                    @info e
+                else
+                    try
+                        eval(e)
+                    catch err
+                        @warn "$err in $e"
+                    end
                 end
             end
         end
