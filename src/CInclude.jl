@@ -24,15 +24,36 @@ export @cinclude
 using ReadmeDocs
 using Clang
 
+function system_include_path()
+    path = ["/usr/include"]
+    if Sys.isapple()
+        sdk = chomp(read(`xcrun --show-sdk-path`, String))
+        push!(path, joinpath(sdk, "usr/include"))
+    elseif Sys.islinux()
+        try
+            x = eachline(`sh -c "gcc -xc -E -v /dev/null 2>&1"`)
+            line, state = iterate(x)
+            while line != nothing &&
+                  line != "#include <...> search starts here:"
+                line, state = iterate(x, state)
+            end
+            line, state = iterate(x, state)
+            while line != nothing &&
+                  line != "End of search list."
+                push!(path, strip(line))
+                line, state = iterate(x, state)
+            end
+        catch err
+            @warn err
+        end
+    end
+    path
+end
+
 
 function find_header(header)
     if !isfile(header)
-        path = ["/usr/include"]
-        if Sys.isapple()
-            sdk = chomp(read(`xcrun --show-sdk-path`, String))
-            push!(path, joinpath(sdk, "usr/include"))
-        end
-        for d in path
+        for d in system_include_path()
             h = joinpath(d, header)
             if isfile(h)
                 return h
@@ -53,10 +74,9 @@ function wrap_header(header; lib="libc", include="", exclude=r"^_")
     ctx.options["is_function_strictly_typed"] = false
     ctx.options["is_struct_mutable"] = true
     
+    cargs::Vector{String} = vcat((["-I", d] for d in system_include_path())...)
 
-    args = vcat((["-I", d] for d in find_std_headers())...)
-
-    parse_headers!(ctx, [header], args=args)
+    parse_headers!(ctx, [header], args=cargs)
 
     for unit in ctx.trans_units
         ctx.children = children(getcursor(unit))
@@ -121,6 +141,18 @@ function wrap_header(header; lib="libc", include="", exclude=r"^_")
     [api; constructors]
 end
 
+function symbol_name(e::Expr)
+    if e.head in (:using, :const, :function)
+        return e.args[1].args[1]
+    elseif e.head == :struct
+        return e.args[2]
+    elseif e.head == :macrocall
+        return e.args[3].args[1]
+    else
+        dump(e)
+    end
+    return nothing
+end
 
 czeros(T) =
     (hasmethod(zero, (t,)) ? zero(t) :
@@ -157,6 +189,11 @@ macro cinclude(h, options...)
                 if e isa String
                     @info e
                 else
+                    n = CInclude.symbol_name(e)
+                    if isdefined(@__MODULE__, n)
+                        @info ":$n already defined in $(@__MODULE__)"
+                        continue
+                    end
                     try
                         eval(e)
                     catch err
