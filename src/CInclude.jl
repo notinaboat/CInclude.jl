@@ -63,8 +63,52 @@ function find_header(header)
     header
 end
 
+function macro_values(header, names)
+    mktempdir() do d
+        cfile = joinpath(d, "tmp.cpp")
+        delim = "aARf6F3fWe6"
+        write(cfile, """
+            #include <iostream>
+            #include <string>
+            #include <iomanip>
+            #include <typeinfo>
+            #include "$header"
 
-function wrap_header(header; lib="libc", include="", exclude=r"^_") 
+            #define T(x) typeid(x).name()[0]
+            #define isstr(x) (T(x) == 'A')
+            #define ischr(x) (T(x) == 'c')
+            #define isint8(x) (T(x) == 'h'|| T(x) == 'a')
+            #define dump(n,x) std::cout << "const " << n << " = " << x
+            #define jlquote(x) std::quoted((const char*)(int)x)
+            #define jlchar(x) std::string("Char(") +                         \\
+                              std::to_string((int)(x)) + ")"
+
+            #define wrap(x) ({                                               \\
+                std::cout << "$delim";                                       \\
+                     if(isstr(x))  dump(#x, jlquote(x));                     \\
+                else if(ischr(x))  dump(#x,  jlchar(x));                     \\
+                else if(isint8(x)) dump(#x,     int(x));                     \\
+                else               dump(#x,        (x));                     \\
+            })
+
+            int main() {
+                $(join(["wrap($n);" for n in names], "\n"))
+            }
+            """)
+        binfile = joinpath(d, "tmp.bin")
+        try
+            run(`g++ -o $binfile $cfile`)
+            output = read(`$binfile`, String)
+            map(Meta.parse, split(output, delim; keepempty=false))
+        catch err
+            @error err
+            return []
+        end
+    end
+end
+
+
+function wrap_header(header; lib="libc", include="", exclude=r"^!")
 
     header = find_header(header)
     @info "@cinclude \"$header\""
@@ -73,25 +117,49 @@ function wrap_header(header; lib="libc", include="", exclude=r"^_")
     ctx.libname = lib
     ctx.options["is_function_strictly_typed"] = false
     ctx.options["is_struct_mutable"] = true
-    
+
     cargs::Vector{String} = vcat((["-I", d] for d in system_include_path())...)
+    @info cargs
 
     parse_headers!(ctx, [header], args=cargs)
+
+    macro_names = []
 
     for unit in ctx.trans_units
         ctx.children = children(getcursor(unit))
         for (i, child) in enumerate(ctx.children)
+            ctx.force_name = ""
+            ctx.children_index = i
             child_name = name(child)
 
             # choose which cursor to wrap
             if haskey(ctx.common_buffer, child_name) || # skip already wrapped
-              !occursin(include, child_name)         || # skip not included
-               occursin(exclude, child_name)            # skip excluded
+               (exclude != "" && occursin(exclude, child_name) &&
+               (include == "" || !occursin(include, child_name)) &&
+               !(child isa Clang.CLEnumDecl))
 
                 continue
             end
 
-            ctx.children_index = i
+            if child isa Clang.CLEnumDecl && child_name == ""
+                ctx.anonymous_counter += 1
+                ctx.force_name = "ANONYMOUS_ENUM_$(ctx.anonymous_counter)"
+            end
+
+            if child isa Clang.CLMacroDefinition
+                if startswith(child_name, "_")
+                    continue
+                end
+                tokens = try tokenize(child) catch end
+                if tokens != nothing &&
+                   tokens.size > 1 &&
+                   tokens[2].text != "(" &&
+                   (tokens.size < 3 || tokens[3].text != ".")
+                    push!(macro_names, child_name)
+                    continue
+                end
+            end
+
             try
                 wrap!(ctx, child)
             catch err
@@ -102,6 +170,8 @@ function wrap_header(header; lib="libc", include="", exclude=r"^_")
         end
     end
 
+
+
     template = [
         :(using CEnum),
         :(const Ctm = Base.Libc.TmStruct),
@@ -110,7 +180,8 @@ function wrap_header(header; lib="libc", include="", exclude=r"^_")
 
     api = [template;
            dump_to_buffer(ctx.common_buffer);
-           ctx.api_buffer]
+           ctx.api_buffer;
+           macro_values(header, macro_names)]
 
     constructors = []
 
@@ -163,7 +234,7 @@ czeros(T) =
 README"## Interface"
 
 README"""
-    @cinclude "header.h" [quiet] [exclude=r"^_"] [include=""] 
+    @cinclude "header.h" [quiet] [exclude=""] [include=""]
 
 Import symbols from C language `header.h` into the current module.
 
@@ -182,17 +253,19 @@ macro cinclude(h, options...)
         logger=:NullLogger
     else
         logger=:current_logger
-    end 
+    end
     esc(quote
         Base.CoreLogging.with_logger(Base.CoreLogging.$logger()) do
             for e in CInclude.wrap_header($h; $(options...))
                 if e isa String
                     @info e
                 else
-                    n = CInclude.symbol_name(e)
-                    if isdefined(@__MODULE__, n)
-                        @info ":$n already defined in $(@__MODULE__)"
-                        continue
+                    if e.head != :function
+                        n = CInclude.symbol_name(e)
+                        if n in names(@__MODULE__; all=true)
+                            @info ":$n already defined in $(@__MODULE__)"
+                            continue
+                        end
                     end
                     try
                         eval(e)
