@@ -260,13 +260,13 @@ macro cinclude(h, options...)
                 if e isa String
                     @info e
                 else
-                    if e.head != :function
+                    #if e.head != :function
                         n = CInclude.symbol_name(e)
                         if n in names(@__MODULE__; all=true)
                             @info ":$n already defined in $(@__MODULE__)"
                             continue
                         end
-                    end
+                    #end
                     try
                         eval(e)
                     catch err
