@@ -154,6 +154,7 @@ function wrap_header(header; lib="libc", include="", exclude=r"^!")
                 if tokens != nothing &&
                    tokens.size > 1 &&
                    tokens[2].text != "(" &&
+                   tokens[2].text != "{" &&
                    (tokens.size < 3 || tokens[3].text != ".")
                     push!(macro_names, child_name)
                     continue
