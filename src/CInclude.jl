@@ -79,15 +79,15 @@ function macro_values(header, names)
             #define ischr(x) (T(x) == 'c')
             #define isint8(x) (T(x) == 'h'|| T(x) == 'a')
             #define dump(n,x) std::cout << "const " << n << " = " << x
-            #define jlquote(x) std::quoted((const char*)(int)x)
+            #define jlquote(x) std::quoted((const char*)(size_t)x)
             #define jlchar(x) std::string("Char(") +                         \\
-                              std::to_string((int)(x)) + ")"
+                              std::to_string((size_t)(x)) + ")"
 
             #define wrap(x) ({                                               \\
                 std::cout << "$delim";                                       \\
                      if(isstr(x))  dump(#x, jlquote(x));                     \\
                 else if(ischr(x))  dump(#x,  jlchar(x));                     \\
-                else if(isint8(x)) dump(#x,     int(x));                     \\
+                else if(isint8(x)) dump(#x,  size_t(x));                     \\
                 else               dump(#x,        (x));                     \\
             })
 
@@ -97,7 +97,7 @@ function macro_values(header, names)
             """)
         binfile = joinpath(d, "tmp.bin")
         try
-            run(`g++ -o $binfile $cfile`)
+            run(`g++ -w -o $binfile $cfile`)
             output = read(`$binfile`, String)
             map(Meta.parse, split(output, delim; keepempty=false))
         catch err
