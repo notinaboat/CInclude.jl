@@ -63,7 +63,7 @@ function find_header(header)
     header
 end
 
-function macro_values(header, names)
+function macro_values(headers, names)
     mktempdir() do d
         cfile = joinpath(d, "tmp.cpp")
         delim = "aARf6F3fWe6"
@@ -72,7 +72,7 @@ function macro_values(header, names)
             #include <string>
             #include <iomanip>
             #include <typeinfo>
-            #include "$header"
+            $(join(["#include \"$h\"" for h in headers], "\n"))
 
             #define T(x) typeid(x).name()[0]
             #define isstr(x) (T(x) == 'A')
@@ -95,6 +95,7 @@ function macro_values(header, names)
                 $(join(["wrap($n);" for n in names], "\n"))
             }
             """)
+        #println(read(cfile, String))
         binfile = joinpath(d, "tmp.bin")
         try
             run(`g++ -w -o $binfile $cfile`)
@@ -108,20 +109,20 @@ function macro_values(header, names)
 end
 
 
-function wrap_header(header; lib="libc", include="", exclude=r"^!")
+function wrap_headers(headers; lib="libc", include="", exclude=r"^!")
 
-    header = find_header(header)
-    @info "@cinclude \"$header\""
+    headers = map(find_header, headers)
+    @info "@cinclude $headers"
 
     ctx = DefaultContext()
     ctx.libname = lib
     ctx.options["is_function_strictly_typed"] = false
-    ctx.options["is_struct_mutable"] = true
+    ctx.options["is_struct_mutable"] = false
 
     cargs::Vector{String} = vcat((["-I", d] for d in system_include_path())...)
     @info cargs
 
-    parse_headers!(ctx, [header], args=cargs)
+    parse_headers!(ctx, headers, args=cargs)
 
     macro_names = []
 
@@ -174,15 +175,24 @@ function wrap_header(header; lib="libc", include="", exclude=r"^!")
 
 
     template = [
+        :(import Base),
+        :(using Base:|),
         :(using CEnum),
         :(const Ctm = Base.Libc.TmStruct),
         :(const Ctime_t = UInt),
-        :(const Cclock_t = UInt)]
+        :(const Cclock_t = UInt),
+        :(const Cstring = Base.Cstring)]
+
+    for t in values(Clang.CLANG_JULIA_TYPEMAP)
+        if isdefined(Base, t)
+            push!(template, :(const $t = Base.$t))
+        end
+    end
 
     api = [template;
            dump_to_buffer(ctx.common_buffer);
            ctx.api_buffer;
-           macro_values(header, macro_names)]
+           macro_values(headers, macro_names)]
 
     constructors = []
 
@@ -202,11 +212,12 @@ function wrap_header(header; lib="libc", include="", exclude=r"^!")
 
         # Generate zero-value default constructors.
         if e.head == :struct
-            T = e.args[2]
-            push!(constructors, :(
-                function $T()
-                    $T(CInclude.czeros($T)...)
-                end))
+            for T in [e.args[2], Symbol("$(e.args[2])_m")]
+                push!(constructors, :(
+                    function $T()
+                        $T(CInclude.czeros($T)...)
+                    end))
+            end
         end
     end
 
@@ -236,6 +247,7 @@ README"## Interface"
 
 README"""
     @cinclude "header.h" [quiet] [exclude=""] [include=""]
+    @cinclude ["foo.h" "bar.h"] [quiet] [exclude=""] [include=""]
 
 Import symbols from C language `header.h` into the current module.
 
@@ -255,28 +267,34 @@ macro cinclude(h, options...)
     else
         logger=:current_logger
     end
-    esc(quote
+    for o in options
+        o.args[1] = esc(o.args[1])
+    end
+    if h isa String
+        h = [h]
+    end
+    quote
         Base.CoreLogging.with_logger(Base.CoreLogging.$logger()) do
-            for e in CInclude.wrap_header($h; $(options...))
+            for e in CInclude.wrap_headers($h; $(options...))
                 if e isa String
                     @info e
                 else
-                    #if e.head != :function
-                        n = CInclude.symbol_name(e)
-                        if n in names(@__MODULE__; all=true)
-                            @info ":$n already defined in $(@__MODULE__)"
-                            continue
-                        end
-                    #end
                     try
-                        eval(e)
+                        Base.eval(@__MODULE__, e)
+                        if e.head == :struct
+                            e = copy(e)
+                            e.args[2] = Symbol("$(e.args[2])_m")
+                            e.args[1] = true
+                            Base.eval(@__MODULE__, e)
+                        end
                     catch err
-                        @warn "$err in $e"
+                        exception=(err, Base.catch_backtrace())
+                        @warn "$err in $e" #exception
                     end
                 end
             end
         end
-    end)
+    end
 end
 
 
