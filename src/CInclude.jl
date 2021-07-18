@@ -279,8 +279,25 @@ macro cinclude(h, options...)
                 if e isa String
                     @info e
                 else
+                    # Check for duplicate methods.
+                    if e.head == :function
+                        args = e.args[1].args
+                        f = args[1]
+                        if Base.isdefined(@__MODULE__, f)
+                            args = args[2:end]
+                            if all(a->a isa Symbol, args)
+                                types = ((Any for a in args)...,)
+                                f = Base.eval(@__MODULE__, f)
+                                if !isempty(methods(f, types))
+                                    @info "Skipping duplicate $f$types"
+                                    continue
+                                end
+                            end
+                        end
+                    end
                     try
                         Base.eval(@__MODULE__, e)
+                        # Create `_m` mutable struct variant.
                         if e.head == :struct
                             e = copy(e)
                             e.args[2] = Symbol("$(e.args[2])_m")
