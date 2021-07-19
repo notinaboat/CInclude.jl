@@ -274,6 +274,16 @@ macro cinclude(h, options...)
         h = [h]
     end
     quote
+        constants = Dict{Int,Vector{Symbol}}()
+        function add_constant(n::Symbol, v::Integer)
+            v = convert(Int, v)
+            names = get(constants, v, nothing)
+            if names == nothing
+                constants[v] = [n]
+            else
+                push!(names, n)
+            end
+        end
         Base.CoreLogging.with_logger(Base.CoreLogging.$logger()) do
             for e in CInclude.wrap_headers($h; $(options...))
                 if e isa String
@@ -308,8 +318,24 @@ macro cinclude(h, options...)
                         exception=(err, Base.catch_backtrace())
                         @warn "$err in $e" #exception
                     end
+                    if e.head == :macrocall &&
+                           e.args[1] == Symbol("@cenum")
+                           name = e.args[3].args[1]
+                        for (v, n) in Base.eval(@__MODULE__,
+                                                :(CEnum.namemap($name)))
+                            add_constant(n, v)
+                        end
+                    elseif e.head == :const
+                        n = e.args[1].args[1]
+                        v = Base.eval(@__MODULE__, 
+                                          :(try Int($n) catch end))
+                        if v != nothing
+                            add_constant(n, v)
+                        end
+                    end
                 end
             end
+            v = Base.eval(@__MODULE__, :(const constants = $constants))
         end
     end
 end
