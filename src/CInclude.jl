@@ -52,6 +52,7 @@ end
 
 
 function find_header(header)
+    header = replace(header, r"[<>]" => "")
     if !isfile(header)
         for d in system_include_path()
             h = joinpath(d, header)
@@ -72,7 +73,7 @@ function macro_values(headers, names)
             #include <string>
             #include <iomanip>
             #include <typeinfo>
-            $(join(["#include \"$h\"" for h in headers], "\n"))
+            $(join(["#include $h" for h in headers], "\n"))
 
             #define T(x) typeid(x).name()[0]
             #define isstr(x) (T(x) == 'A')
@@ -96,6 +97,7 @@ function macro_values(headers, names)
             }
             """)
         #println(read(cfile, String))
+        write("cinclude_tmp.c", read(cfile, String))
         binfile = joinpath(d, "tmp.bin")
         try
             run(`g++ -w -o $binfile $cfile`)
@@ -111,8 +113,8 @@ end
 
 function wrap_headers(headers; lib="libc", include="", exclude=r"^!")
 
-    headers = map(find_header, headers)
-    @info "@cinclude $headers"
+    long_headers = map(find_header, headers)
+    @info "@cinclude $long_headers"
 
     ctx = DefaultContext()
     ctx.libname = lib
@@ -122,7 +124,7 @@ function wrap_headers(headers; lib="libc", include="", exclude=r"^!")
     cargs::Vector{String} = vcat((["-I", d] for d in system_include_path())...)
     @info cargs
 
-    parse_headers!(ctx, headers, args=cargs)
+    parse_headers!(ctx, long_headers, args=cargs)
 
     macro_names = []
 
@@ -181,7 +183,8 @@ function wrap_headers(headers; lib="libc", include="", exclude=r"^!")
         :(const Ctm = Base.Libc.TmStruct),
         :(const Ctime_t = UInt),
         :(const Cclock_t = UInt),
-        :(const Cstring = Base.Cstring)]
+        :(const Cstring = Base.Cstring),
+        :(const Clong = Base.Clong)]
 
     for t in values(Clang.CLANG_JULIA_TYPEMAP)
         if isdefined(Base, t)
@@ -192,7 +195,7 @@ function wrap_headers(headers; lib="libc", include="", exclude=r"^!")
     api = [template;
            dump_to_buffer(ctx.common_buffer);
            ctx.api_buffer;
-           macro_values(headers, macro_names)]
+           macro_values(headers, unique(macro_names))]
 
     constructors = []
 
@@ -274,6 +277,7 @@ macro cinclude(h, options...)
         h = [h]
     end
     quote
+
         constants = Dict{Int,Vector{Symbol}}()
         function add_constant(n::Symbol, v::Integer)
             v = convert(Int, v)
@@ -284,6 +288,15 @@ macro cinclude(h, options...)
                 push!(names, n)
             end
         end
+
+        function doceval(e)
+            if e.head in (:function, :const)
+                doc = string("```\n", e, "\n```\n")
+                e = :(Core.@doc($doc, $e))
+            end
+            Base.eval(@__MODULE__, e)
+        end
+
         Base.CoreLogging.with_logger(Base.CoreLogging.$logger()) do
             for e in CInclude.wrap_headers($h; $(options...))
                 if e isa String
@@ -306,7 +319,7 @@ macro cinclude(h, options...)
                         end
                     end
                     try
-                        Base.eval(@__MODULE__, e)
+                        doceval(e)
                         # Create `_m` mutable struct variant.
                         if e.head == :struct
                             e = copy(e)
@@ -315,7 +328,7 @@ macro cinclude(h, options...)
                             Base.eval(@__MODULE__, e)
                         end
                     catch err
-                        exception=(err, Base.catch_backtrace())
+                        #exception=(err, Base.catch_backtrace())
                         @warn "$err in $e" #exception
                     end
                     if e.head == :macrocall &&
@@ -335,7 +348,8 @@ macro cinclude(h, options...)
                     end
                 end
             end
-            v = Base.eval(@__MODULE__, :(const constants = $constants))
+            Base.eval(@__MODULE__, :(const constants = $constants))
+            nothing
         end
     end
 end
