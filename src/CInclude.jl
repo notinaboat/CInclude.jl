@@ -65,6 +65,7 @@ function find_header(header)
 end
 
 function macro_values(headers, names)
+    headers = [startswith(h, "<") ? h : "\"$h\"" for h in headers]
     mktempdir() do d
         cfile = joinpath(d, "tmp.cpp")
         delim = "aARf6F3fWe6"
