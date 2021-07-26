@@ -112,7 +112,7 @@ function macro_values(headers, names)
 end
 
 
-function wrap_headers(headers; lib="libc", include="", exclude=r"^!")
+function wrap_headers(headers; lib="libc", include="", exclude=r"^!", args=[])
 
     long_headers = map(find_header, headers)
     @info "@cinclude $long_headers"
@@ -123,6 +123,7 @@ function wrap_headers(headers; lib="libc", include="", exclude=r"^!")
     ctx.options["is_struct_mutable"] = false
 
     cargs::Vector{String} = vcat((["-I", d] for d in system_include_path())...)
+    append!(cargs, args)
     @info cargs
 
     parse_headers!(ctx, long_headers, args=cargs)
@@ -271,6 +272,8 @@ macro cinclude(h, options...)
     else
         logger=:current_logger
     end
+    verbose = :verbose in options
+    options=filter(x->x!=:verbose, options)
     for o in options
         o.args[1] = esc(o.args[1])
     end
@@ -303,6 +306,7 @@ macro cinclude(h, options...)
                 if e isa String
                     @info e
                 else
+                    $verbose && @info e
                     # Check for duplicate methods.
                     if e.head == :function
                         args = e.args[1].args
