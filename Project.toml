@@ -1,7 +1,7 @@
 name = "CInclude"
 uuid = "122a1be9-ad55-43c7-9e7c-9e9d38f5ac3b"
 authors = ["notinaboat <notinaboat@icloud.com>"]
-version = "0.2.0"
+version = "0.2.1"
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"

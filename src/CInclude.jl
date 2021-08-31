@@ -250,6 +250,9 @@ czeros(T) =
 
 README"## Interface"
 
+eval_int_constant(mod, name) = Base.eval(mod, :(try Int($name) catch end))
+eval_enum_constant(mod, name) = Base.eval(mod, :(CEnum.namemap($name)))
+
 README"""
     @cinclude "header.h" [quiet] [exclude=""] [include=""]
     @cinclude ["foo.h" "bar.h"] [quiet] [exclude=""] [include=""]
@@ -294,9 +297,11 @@ macro cinclude(h, options...)
         end
 
         function doceval(e)
-            if e.head in (:function, :const)
-                doc = string("```\n", e, "\n```\n")
-                e = :(Core.@doc($doc, $e))
+            if VERSION >= v"1.6"
+                if e.head in (:function, :const)
+                    doc = string("```\n", e, "\n```\n")
+                    e = :(Core.@doc($doc, $e))
+                end
             end
             Base.eval(@__MODULE__, e)
         end
@@ -336,24 +341,22 @@ macro cinclude(h, options...)
                         #exception=(err, Base.catch_backtrace())
                         @warn "$err in $e" #exception
                     end
-                    if e.head == :macrocall &&
-                           e.args[1] == Symbol("@cenum")
-                           name = e.args[3].args[1]
-                        for (v, n) in Base.eval(@__MODULE__,
-                                                :(CEnum.namemap($name)))
+                    if e.head == :macrocall && e.args[1] == Symbol("@cenum")
+                        name = e.args[3].args[1]
+                        for (v, n) in eval_enum_constant(@__MODULE__, name)
                             add_constant(n, v)
                         end
                     elseif e.head == :const
-                        n = e.args[1].args[1]
-                        v = Base.eval(@__MODULE__, 
-                                          :(try Int($n) catch end))
+                        name = e.args[1].args[1]
+                        v = eval_int_constant(@__MODULE__, name)
                         if v != nothing
-                            add_constant(n, v)
+                            add_constant(name, v)
                         end
                     end
                 end
             end
-            Base.eval(@__MODULE__, :(const constants = $constants))
+            Base.eval(@__MODULE__,
+                      Expr(:const, Expr(Symbol("="), :constants, constants)))
             nothing
         end
     end
