@@ -275,6 +275,8 @@ macro cinclude(h, options...)
     else
         logger=:current_logger
     end
+    static = :static in options
+    options=filter(x->x!=:static, options)
     verbose = :verbose in options
     options=filter(x->x!=:verbose, options)
     for o in options
@@ -284,6 +286,12 @@ macro cinclude(h, options...)
         h = [h]
     end
     quote
+
+        static_code = String[]
+        function add_static_code(e)
+            $static || return
+            push!(static_code, string(e))
+        end
 
         constants = Dict{Int,Vector{Symbol}}()
         function add_constant(n::Symbol, v::Integer)
@@ -330,12 +338,14 @@ macro cinclude(h, options...)
                     end
                     try
                         doceval(e)
+                        add_static_code(e)
                         # Create `_m` mutable struct variant.
                         if e.head == :struct
                             e = copy(e)
                             e.args[2] = Symbol("$(e.args[2])_m")
                             e.args[1] = true
                             Base.eval(@__MODULE__, e)
+                            add_static_code(e)
                         end
                     catch err
                         #exception=(err, Base.catch_backtrace())
@@ -355,8 +365,12 @@ macro cinclude(h, options...)
                     end
                 end
             end
-            Base.eval(@__MODULE__,
-                      Expr(:const, Expr(Symbol("="), :constants, constants)))
+            e = Expr(:const, Expr(Symbol("="), :constants, constants))
+            Base.eval(@__MODULE__, e)
+
+            add_static_code(e)
+            @info "Saving output in $(pwd())"
+            write("c_include_static_output.jl", join(static_code, "\n\n"))
             nothing
         end
     end
